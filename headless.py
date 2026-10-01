@@ -1,28 +1,47 @@
 import os
 import json
+import base64
 import urllib.request
 import urllib.parse
+import urllib.error
 
 BUNDLE_ID = 201
 CHAT_ID = "6920969559"
 
 ROBLOX_URL = f"https://catalog.roblox.com/v1/bundles/{BUNDLE_ID}/details"
-TOKEN = os.environ["TELEGRAM_TOKEN"]
-STATE_FILE = "state.json"
+
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
+
+OWNER = "lorsanart"
+REPO = "RB"
+STATE_PATH = "state.json"
 
 
-def get_roblox_data():
+def request_json(url, method="GET", data=None, headers=None):
+    headers = headers or {}
+    headers["User-Agent"] = "HeadlessMonitor/1.0"
+
     request = urllib.request.Request(
-        ROBLOX_URL,
-        headers={"User-Agent": "RobloxHeadlessMonitor/1.0"}
+        url,
+        data=data,
+        headers=headers,
+        method=method
     )
 
     with urllib.request.urlopen(request, timeout=20) as response:
         return json.loads(response.read().decode())
 
 
+def get_roblox_data():
+    return request_json(
+        ROBLOX_URL,
+        headers={"User-Agent": "HeadlessMonitor/1.0"}
+    )
+
+
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
     data = urllib.parse.urlencode({
         "chat_id": CHAT_ID,
@@ -30,29 +49,79 @@ def send_telegram(message):
         "parse_mode": "HTML"
     }).encode()
 
-    request = urllib.request.Request(url, data=data)
+    result = request_json(
+        url,
+        method="POST",
+        data=data
+    )
 
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.loads(response.read().decode())
+    print("Telegram:", "OK" if result.get("ok") else "ERROR")
 
-
-def load_state():
-    if not os.path.exists(STATE_FILE):
-        return None
-
-    with open(STATE_FILE, "r") as file:
-        return json.load(file)
+    if not result.get("ok"):
+        raise RuntimeError(f"Telegram rechazó el mensaje: {result}")
 
 
-def save_state(on_sale, price):
-    with open(STATE_FILE, "w") as file:
-        json.dump({
-            "on_sale": on_sale,
-            "price": price
-        }, file)
+def get_state():
+    url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{STATE_PATH}"
+
+    try:
+        result = request_json(
+            url,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "Authorization": f"Bearer {GITHUB_TOKEN}",
+                "X-GitHub-Api-Version": "2026-03-10"
+            }
+        )
+
+        content = base64.b64decode(
+            result["content"].replace("\n", "")
+        ).decode()
+
+        return json.loads(content), result["sha"]
+
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return None, None
+        raise
+
+
+def save_state(state, sha=None):
+    content = json.dumps(state, indent=2).encode()
+    encoded = base64.b64encode(content).decode()
+
+    url = f"https://api.github.com/repos/{OWNER}/{REPO}/contents/{STATE_PATH}"
+
+    body = {
+        "message": "Update Headless state",
+        "content": encoded,
+        "branch": "main"
+    }
+
+    if sha:
+        body["sha"] = sha
+
+    data = json.dumps(body).encode()
+
+    result = request_json(
+        url,
+        method="PUT",
+        data=data,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {GITHUB_TOKEN}",
+            "X-GitHub-Api-Version": "2026-03-10",
+            "Content-Type": "application/json"
+        }
+    )
+
+    print("Estado guardado en GitHub: OK")
 
 
 def main():
+
+    print("Comprobando Headless Horseman...")
+
     data = get_roblox_data()
 
     product = data.get("product", {})
@@ -70,17 +139,18 @@ def main():
         or collectible.get("price")
     )
 
-    old_state = load_state()
+    print(f"Estado: {'EN VENTA' if on_sale else 'NO ESTÁ EN VENTA'}")
+    print(f"Precio: {price}")
 
-    # Primera comprobación
+    old_state, sha = get_state()
+
+    # Primera ejecución
     if old_state is None:
-
-        save_state(on_sale, price)
 
         if on_sale:
             message = (
                 "🎃 <b>HEADLESS HORSEMAN</b>\n\n"
-                "🟢 <b>ESTÁ A LA VENTA</b>\n"
+                "🟢 <b>¡ESTÁ A LA VENTA!</b>\n"
                 f"💰 Precio: <b>{price:,} Robux</b>\n\n"
                 "🛒 https://www.roblox.com/bundles/201/Headless-Horseman"
             )
@@ -91,33 +161,37 @@ def main():
             )
 
         send_telegram(message)
-        return
 
-    old_on_sale = old_state.get("on_sale", False)
+    else:
 
-    # Ha pasado de NO estar a la venta → A LA VENTA
-    if on_sale and not old_on_sale:
+        old_on_sale = old_state.get("on_sale", False)
 
-        message = (
-            "🚨🎃 <b>HEADLESS HORSEMAN</b> 🎃🚨\n\n"
-            "🟢 <b>¡ESTÁ A LA VENTA!</b>\n"
-            f"💰 Precio: <b>{price:,} Robux</b>\n\n"
-            "🛒 https://www.roblox.com/bundles/201/Headless-Horseman"
-        )
+        # NO VENTA → VENTA
+        if on_sale and not old_on_sale:
 
-        send_telegram(message)
+            message = (
+                "🚨🎃 <b>HEADLESS HORSEMAN</b> 🎃🚨\n\n"
+                "🟢 <b>¡ESTÁ A LA VENTA!</b>\n"
+                f"💰 Precio: <b>{price:,} Robux</b>\n\n"
+                "🛒 https://www.roblox.com/bundles/201/Headless-Horseman"
+            )
 
-    # Ha pasado de estar a la venta → NO A LA VENTA
-    elif not on_sale and old_on_sale:
+            send_telegram(message)
 
-        message = (
-            "🔴 <b>HEADLESS HORSEMAN</b>\n\n"
-            "❌ <b>YA NO ESTÁ A LA VENTA</b>"
-        )
+        # VENTA → NO VENTA
+        elif not on_sale and old_on_sale:
 
-        send_telegram(message)
+            message = (
+                "🔴 <b>HEADLESS HORSEMAN</b>\n\n"
+                "❌ <b>YA NO ESTÁ A LA VENTA</b>"
+            )
 
-    save_state(on_sale, price)
+            send_telegram(message)
+
+    save_state({
+        "on_sale": on_sale,
+        "price": price
+    }, sha)
 
 
 if __name__ == "__main__":
