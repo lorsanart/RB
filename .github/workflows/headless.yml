@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: headless-monitor
+  cancel-in-progress: false
+
 jobs:
   check-headless:
     runs-on: ubuntu-latest
@@ -19,5 +23,5 @@ jobs:
       - name: Ejecutar comprobador
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          GITHUB_ACTIONS: "true"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python headless.py
