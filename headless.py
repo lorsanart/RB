@@ -2,13 +2,11 @@ import os
 import json
 import urllib.request
 import urllib.parse
-import subprocess
 
 BUNDLE_ID = 201
 CHAT_ID = "6920969559"
 
 ROBLOX_URL = f"https://catalog.roblox.com/v1/bundles/{BUNDLE_ID}/details"
-
 TOKEN = os.environ["TELEGRAM_TOKEN"]
 STATE_FILE = "state.json"
 
@@ -40,30 +38,18 @@ def send_telegram(message):
 
 def load_state():
     if not os.path.exists(STATE_FILE):
-        return {
-            "on_sale": False,
-            "price": None
-        }
+        return None
 
     with open(STATE_FILE, "r") as file:
         return json.load(file)
 
 
-def save_state(state):
+def save_state(on_sale, price):
     with open(STATE_FILE, "w") as file:
-        json.dump(state, file)
-
-
-def commit_state():
-    subprocess.run(["git", "config", "user.name", "Headless Monitor"])
-    subprocess.run(["git", "config", "user.email", "headless@github.com"])
-    subprocess.run(["git", "add", STATE_FILE])
-    subprocess.run(
-        ["git", "commit", "-m", "Update Headless state"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
-    )
-    subprocess.run(["git", "push"])
+        json.dump({
+            "on_sale": on_sale,
+            "price": price
+        }, file)
 
 
 def main():
@@ -84,41 +70,54 @@ def main():
         or collectible.get("price")
     )
 
-    state = load_state()
+    old_state = load_state()
 
-    was_on_sale = state.get("on_sale", False)
-    old_price = state.get("price")
+    # Primera comprobación
+    if old_state is None:
 
-    # Avisar cuando pasa de fuera de venta a disponible
-    if on_sale and not was_on_sale:
+        save_state(on_sale, price)
+
+        if on_sale:
+            message = (
+                "🎃 <b>HEADLESS HORSEMAN</b>\n\n"
+                "🟢 <b>ESTÁ A LA VENTA</b>\n"
+                f"💰 Precio: <b>{price:,} Robux</b>\n\n"
+                "🛒 https://www.roblox.com/bundles/201/Headless-Horseman"
+            )
+        else:
+            message = (
+                "🎃 <b>HEADLESS HORSEMAN</b>\n\n"
+                "🔴 <b>NO ESTÁ A LA VENTA</b>"
+            )
+
+        send_telegram(message)
+        return
+
+    old_on_sale = old_state.get("on_sale", False)
+
+    # Ha pasado de NO estar a la venta → A LA VENTA
+    if on_sale and not old_on_sale:
+
         message = (
-            "🎃 <b>HEADLESS HORSEMAN DISPONIBLE</b>\n\n"
-            f"🐎 {name}\n"
-            f"💰 Precio: <b>{price:,} Robux</b>\n"
-            "🟢 Estado: <b>EN VENTA</b>\n\n"
+            "🚨🎃 <b>HEADLESS HORSEMAN</b> 🎃🚨\n\n"
+            "🟢 <b>¡ESTÁ A LA VENTA!</b>\n"
+            f"💰 Precio: <b>{price:,} Robux</b>\n\n"
             "🛒 https://www.roblox.com/bundles/201/Headless-Horseman"
         )
 
         send_telegram(message)
 
-    # Si ya estaba disponible y cambia el precio, avisar también
-    elif on_sale and was_on_sale and price != old_price:
+    # Ha pasado de estar a la venta → NO A LA VENTA
+    elif not on_sale and old_on_sale:
+
         message = (
-            "💰 <b>CAMBIO DE PRECIO - HEADLESS HORSEMAN</b>\n\n"
-            f"🐎 {name}\n"
-            f"💰 Nuevo precio: <b>{price:,} Robux</b>\n\n"
-            "🛒 https://www.roblox.com/bundles/201/Headless-Horseman"
+            "🔴 <b>HEADLESS HORSEMAN</b>\n\n"
+            "❌ <b>YA NO ESTÁ A LA VENTA</b>"
         )
 
         send_telegram(message)
 
-    state["on_sale"] = on_sale
-    state["price"] = price
-
-    save_state(state)
-
-    if os.environ.get("GITHUB_ACTIONS") == "true":
-        commit_state()
+    save_state(on_sale, price)
 
 
 if __name__ == "__main__":
